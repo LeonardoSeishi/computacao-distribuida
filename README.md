@@ -7,6 +7,13 @@ curtos e fáceis de compartilhar, além de possibilitar o rastreamento de acesso
 trabalho, deve ser implementado um sistema de encurtamento de URLs simplificado, com
 foco na comunicação distribuída entre componentes.
 
+**Como executar:**
+
+```bash
+pip install -r requirements.txt
+python main.py 
+```
+
 A arquitetura do sistema é composta por três elementos
 principais:
 
