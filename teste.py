@@ -1,5 +1,8 @@
 from cliente_lib import encurta, resolve, remove_url
 
+# Teste básico do sistema.
+# Executa o fluxo completo: encurtar, resolver e remover uma URL.
+
 # Encurtar
 status, codigo = encurta("https://www.google.com")
 if status == 0:

@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include "cliente.h"
 
+// Teste básico do cliente em C.
+// Executa o fluxo completo: encurtar, resolver e remover uma URL.
+
 int main() {
     char codigo[1024];
     char url[1024];
