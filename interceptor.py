@@ -33,6 +33,10 @@ PORTA = int(cfg['INTERCEPTADOR_PORTA'])
 
 CACHE_CAPACIDADE = int(cfg['CACHE_CAPACIDADE'])
 CACHE_TTL = int(cfg['CACHE_TTL'])
+REQUEST_TIMEOUT = int(cfg.get('REQUEST_TIMEOUT', 5))
+
+CIRCUIT_BREAKER_FALHAS = int(cfg.get('CIRCUIT_BREAKER_FALHAS', 3))
+CIRCUIT_BREAKER_TIMEOUT = int(cfg.get('CIRCUIT_BREAKER_TIMEOUT', 10))
 
 
 # CACHE LRU + TTL
@@ -87,6 +91,93 @@ cache = CacheLRU(
 )
 
 
+# CIRCUIT BREAKER
+class CircuitBreakerAberto(Exception):
+    pass
+
+
+class CircuitBreaker:
+    FECHADO = 'FECHADO'
+    ABERTO = 'ABERTO'
+    MEIO_ABERTO = 'MEIO_ABERTO'
+
+    def __init__(self, limite_falhas, tempo_recuperacao):
+        self.limite_falhas = limite_falhas
+        self.tempo_recuperacao = tempo_recuperacao
+        self.estado = self.FECHADO
+        self.falhas = 0
+        self.ultima_falha = None
+        self.lock = threading.Lock()
+
+    def pode_chamar(self):
+        with self.lock:
+            if self.estado == self.FECHADO:
+                return True
+
+            if self.estado == self.MEIO_ABERTO:
+                return False
+
+            tempo_passado = time.time() - self.ultima_falha
+            if tempo_passado >= self.tempo_recuperacao:
+                self.estado = self.MEIO_ABERTO
+                print("[CircuitBreaker] MEIO_ABERTO -> testando servidor")
+                return True
+
+            return False
+
+    def sucesso(self):
+        with self.lock:
+            if self.estado != self.FECHADO or self.falhas > 0:
+                print("[CircuitBreaker] FECHADO -> servidor recuperado")
+
+            self.estado = self.FECHADO
+            self.falhas = 0
+            self.ultima_falha = None
+
+    def falha(self):
+        with self.lock:
+            self.falhas += 1
+            self.ultima_falha = time.time()
+
+            if self.estado == self.MEIO_ABERTO or self.falhas >= self.limite_falhas:
+                self.estado = self.ABERTO
+                print("[CircuitBreaker] ABERTO -> bloqueando chamadas ao servidor")
+            else:
+                print(f"[CircuitBreaker] Falha {self.falhas}/{self.limite_falhas}")
+
+
+circuit_breaker = CircuitBreaker(
+    CIRCUIT_BREAKER_FALHAS,
+    CIRCUIT_BREAKER_TIMEOUT
+)
+
+
+def chamar_servidor_com_circuit_breaker(metodo, url, **kwargs):
+    if not circuit_breaker.pode_chamar():
+        raise CircuitBreakerAberto(
+            "Circuit breaker aberto: servidor temporariamente indisponivel"
+        )
+
+    try:
+        resp = requests.request(
+            metodo,
+            url,
+            timeout=REQUEST_TIMEOUT,
+            **kwargs
+        )
+
+        # Apenas falhas do servidor contam para abrir o circuito.
+        if resp.status_code >= 500:
+            resp.raise_for_status()
+
+        circuit_breaker.sucesso()
+        return resp
+
+    except Exception:
+        circuit_breaker.falha()
+        raise
+
+
 # PROCESSAMENTO DOS COMANDOS
 def processar(comando, parametro):
 
@@ -96,7 +187,7 @@ def processar(comando, parametro):
         if comando == 'ENCURTA':
             url = f"{BASE_URL}/shorten"
             try:
-                resp = requests.post(url, json={'url': parametro}, timeout=5)
+                resp = chamar_servidor_com_circuit_breaker('POST', url, json={'url': parametro})
                 resp.raise_for_status()
                 codigo = resp.json()['shortcode']
 
@@ -119,7 +210,7 @@ def processar(comando, parametro):
             # Se não estiver no cache, consulta o servidor
             url = f"{BASE_URL}/resolve/{parametro}"
             try:
-                resp = requests.get(url, timeout=5)
+                resp = chamar_servidor_com_circuit_breaker('GET', url)
                 resp.raise_for_status()
                 url = resp.json()['url']
 
@@ -134,7 +225,7 @@ def processar(comando, parametro):
 
             url = f"{BASE_URL}/{parametro}"
             try:
-                resp = requests.delete(url, timeout=5)
+                resp = chamar_servidor_com_circuit_breaker('DELETE', url)
                 resp.raise_for_status()
                 cache.invalidate(parametro)
                 return f"OK\n"
