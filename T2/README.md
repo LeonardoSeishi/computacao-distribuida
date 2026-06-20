@@ -1,105 +1,172 @@
-# Computação Distribuída
+# T2 — Consenso via Raft (INE 5418 · UFSC · 2026/1)
 
-## T1 - Encurtador de URLs Distribuído
+Implementação do algoritmo Raft em Python puro (sem dependências externas),
+com uma aplicação de quiz distribuído como demonstração.
 
-Serviços de encurtamento de URLs permitem transformar URLs longas em códigos
-curtos e fáceis de compartilhar, além de possibilitar o rastreamento de acessos. Neste
-trabalho, deve ser implementado um sistema de encurtamento de URLs simplificado, com
-foco na comunicação distribuída entre componentes.
+## Requisitos
 
-**Como executar:**
+- Python 3.10+
+- Sem pacotes externos (usa apenas a stdlib)
+
+## Estrutura
+
+```
+raft/
+  node.py       # máquina de estados Raft (eleição, log, commit)
+  messages.py   # dataclasses: RequestVote, AppendEntries, etc.
+  transport.py  # servidor/cliente TCP com Berkeley Sockets
+app/
+  quiz.py       # lógica do quiz — aplica comandos ao placar
+main.py         # ponto de entrada de cada nó
+client.py       # cliente CLI para jogadores
+run_cluster.sh  # sobe os 3 nós de uma vez
+```
+
+## Execução
+
+### Opção A — terminal por terminal (recomendado para desenvolvimento)
+
+Abra quatro terminais na pasta do projeto.
+
+**Terminal 1 — Nó 1:**
+```bash
+python3 main.py 1
+```
+
+**Terminal 2 — Nó 2:**
+```bash
+python3 main.py 2
+```
+
+**Terminal 3 — Nó 3:**
+```bash
+python3 main.py 3
+```
+
+Cada nó escuta na porta `5000 + id` (5001, 5002, 5003).  
+Em poucos instantes você verá nos logs qual nó se elegeu líder.
+
+**Terminal 4 — cliente:**
+```bash
+python3 client.py --questions                                              # listar perguntas
+python3 client.py --node 1 --player Alice --question 1 --answer AppendEntries
+python3 client.py --node 1 --scoreboard                                    # ver placar
+```
+
+O cliente redireciona automaticamente para o líder caso o nó contatado seja seguidor.
+
+---
+
+### Opção B — script automático (tudo em background)
 
 ```bash
-pip install -r requirements.txt
-python main.py 
+./run_cluster.sh          # sobe os 3 nós, logs em logs/
+tail -f logs/node1.log logs/node2.log logs/node3.log
 ```
 
-A arquitetura do sistema é composta por três elementos
-principais:
-
-**Clientes**, um **interceptador** (proxy) e um **servidor** REST (API alvo).
-Os clientes se comunicam com o interceptador via **sockets** (usar API Berkley sockets) e o interceptador
-repassa as requisições ao servidor via **API REST** (HTTP). O interceptador atua como um
-**middleware**, podendo aplicar lógicas como cache, controle de tráfego ou tratamento de
-falhas antes de encaminhar as requisições ao servidor.
-
-### API Alvo (Servidor REST)
-
-O servidor expõe uma API REST para gerenciamento de URLs encurtadas. É uma
-aplicação independente que não possui conhecimento do interceptador: recebe requisições
-HTTP e retorna respostas. O armazenamento dos mapeamentos (código curto -> URL
-original) é feito localmente (em memória).
-
-### Interceptador (Proxy)
-
-O interceptador é o componente central do trabalho. Ele:
-
-- Recebe requisições dos clientes via sockets TCP
-- Processa as requisições aplicando padrões de projeto escolhidos (cache, circuit breaker, rate limiting, etc.)
-- Repassa as requisições ao servidor via HTTP/REST
-- Retorna as respostas ao cliente via sockets
-- **O interceptador deve ser transparente para o servidor**, o servidor não sabe
-que existe um proxy no meio. Do ponto de vista do cliente, o **interceptador é o
-"servidor"**.
-
-### Cliente
-
-O cliente é um programa que se conecta ao interceptador via sockets TCP e envia
-comandos para encurtar, resolver ou remover URLs. A API disponível ao cliente deve ser
-oferecida por uma biblioteca, de modo que qualquer programador possa utilizar o serviço
-importando a biblioteca.
-Funções da biblioteca:
-
-- `int encurta(char *url_original, char *url_curta)`:
-
-Envia a URL original ao interceptador e recebe o código curto. Retorna código de erro em caso de falha.
-
-- `int resolve(char *codigo_curto, char *url_original)`:
-
-Envia o código curto ao interceptador e recebe a URL original. Retorna código de erro em caso de falha.
-
-- `int remove_url(char *codigo_curto)`:
-
-Remove o mapeamento de uma URL encurtada. Retorna código de erro em caso de falha.
-
-#### Heterogeneidade
-
-**Cliente:** Implementado em **Python** com biblioteca **C/C++**
-
-### Coerência de cache no Interceptador
-
-**Política de cache:**
-
-O interceptador mantém um cache local dos mapeamentos de URLs resolvidas
-recentemente (código curto -> URL original). Este cache utiliza o padrão Cache-Aside e tem
-como objetivo reduzir requisições ao servidor REST, melhorando o tempo de resposta para
-os clientes.
-No caso de resoluções sucessivas, se o interceptador tiver uma cópia válida do
-mapeamento em cache, a resposta é retornada diretamente ao cliente via socket, sem gerar
-requisição ao servidor REST. Caso contrário (cache miss), o interceptador consulta o
-servidor, armazena a resposta em cache e retorna ao cliente.
-No caso de remoções, quando um cliente solicita a remoção de uma URL encurtada,
-o interceptador encaminha a requisição DELETE ao servidor REST e invalida a entrada
-correspondente no cache local, garantindo que consultas futuras não retornem dados
-obsoletos.
-A política de gerenciamento do cache (ex: LRU - Least Recently Used) e sua
-capacidade máxima ficam a critério do grupo e devem ser configuráveis. É permitida a
-utilização de estratégias complementares (fallback) como TTL (Time-to-Live) para expiração
-
-### Configuração
-
-`/config.txt`
-
-Arquivo de configuração para inicializar o interceptador (endereço e a porta do servidor REST, o endereço e a porta do interceptador (para os clientes), e parâmetros do cache).
-
-**Requisição no formato:**
-
-```text
-
+```bash
+./run_cluster.sh --demo   # cenário de submissões concorrentes
+./run_cluster.sh --kill   # encerra todos os nós
 ```
 
-**Resposta:**
+---
 
-```text
+## Cenários de demonstração
 
+### Cenário 1 — execução normal com dois clientes simultâneos
+
+O servidor suporta múltiplos clientes ao mesmo tempo — cada conexão roda em
+uma thread separada. Para demonstrar a concorrência manualmente, use **5 terminais**:
+
+**Terminais 1, 2, 3 — nós do cluster:**
+```bash
+python3 main.py 1   # terminal 1
+python3 main.py 2   # terminal 2
+python3 main.py 3   # terminal 3
+```
+
+**Terminal 4 — cliente Alice** (dispare ao mesmo tempo que o terminal 5):
+```bash
+python3 client.py --node 1 --player Alice --question 1 --answer AppendEntries
+```
+
+**Terminal 5 — cliente Bob** (dispare ao mesmo tempo que o terminal 4):
+```bash
+python3 client.py --node 2 --player Bob --question 2 --answer 3
+```
+
+Nos logs dos 3 nós você verá as duas entradas commitadas **na mesma ordem** e
+o placar final idêntico nos três. Ou via script:
+
+```bash
+./run_cluster.sh --demo
+```
+
+### Cenário 2 — falha do líder
+
+```bash
+# 1. Iniciar o cluster
+./run_cluster.sh
+
+# 2. Ver qual nó virou líder (procure "tornou-se LÍDER" nos logs)
+grep "LÍDER" logs/node*.log
+
+# 3. Matar o líder (ex.: nó 1)
+kill $(cat logs/node1.pid)
+
+# 4. Observar nos outros logs:
+#    - election timeout
+#    - RequestVote sendo enviado
+#    - novo líder eleito com term incrementado
+tail -f logs/node2.log logs/node3.log
+```
+
+### Cenário 3 — recuperação de nó
+
+```bash
+# Após o cenário 2, reiniciar o nó que caiu:
+python main.py 1 > logs/node1.log 2>&1 &
+
+# O nó volta como follower e recebe AppendEntries para sincronizar o log.
+tail -f logs/node1.log
+```
+
+---
+
+## Protocolo
+
+### Mensagens Raft (JSON sobre TCP)
+
+| Mensagem | De → Para | Quando |
+|---|---|---|
+| `RequestVote` | candidato → todos | ao iniciar eleição |
+| `RequestVoteReply` | qualquer → candidato | resposta ao voto |
+| `AppendEntries` | líder → seguidores | replicação + heartbeat |
+| `AppendEntriesReply` | seguidor → líder | confirmação |
+| `ClientRequest` | cliente → qualquer nó | submissão de resposta |
+| `GetScoreboard` | cliente → qualquer nó | consulta do placar |
+
+### Timers
+
+| Timer | Valor |
+|---|---|
+| `election_timeout` | aleatório 150–300 ms |
+| `heartbeat_interval` | fixo 50 ms |
+
+### Persistência
+
+Cada nó salva `currentTerm`, `votedFor` e `log[]` em:
+```
+data/raft_state_{node_id}.json
+```
+Ao reiniciar, o estado é restaurado automaticamente.
+
+---
+
+## Formato do log
+
+```
+HH:MM:SS.mmm [NÓ 1 | LEADER    | term=2] quórum atingido | commitIndex=3
+HH:MM:SS.mmm [NÓ 2 | FOLLOWER  | term=2] AppendEntries de 1 | +1 entr. | log_len=3
+HH:MM:SS.mmm [NÓ 3 | FOLLOWER  | term=2] APLICANDO | index=3 | cmd={...}
 ```

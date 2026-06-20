@@ -1,0 +1,1 @@
+{"currentTerm": 2, "votedFor": 3, "log": [{"term": 1, "index": 1, "command": {"player": "Alice", "points": 10}}, {"term": 1, "index": 2, "command": {"player": "Bob", "points": 10}}]}
