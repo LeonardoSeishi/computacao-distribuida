@@ -53,7 +53,7 @@ def submit_command(node_id: int, command: dict, max_redirects: int = 3) -> dict 
     """Submit a command, following leader redirects automatically."""
     port = BASE_PORT + node_id
     for attempt in range(max_redirects + 1):
-        print(f'  → conectando ao nó {node_id} ({HOST}:{port})...')
+        print(f'  -> conectando ao nó {node_id} ({HOST}:{port})...')
         resp = send_request(HOST, port, {'type': 'ClientRequest', 'command': command})
         if resp is None:
             return None
@@ -61,11 +61,11 @@ def submit_command(node_id: int, command: dict, max_redirects: int = 3) -> dict 
             return resp
         leader_id = resp.get('leaderId')
         if leader_id is not None:
-            print(f'  ↩ nó {node_id} não é o líder | redirecionando para nó {leader_id}...')
+            print(f'  -> nó {node_id} não é o líder | redirecionando para nó {leader_id}...')
             node_id = leader_id
             port = BASE_PORT + leader_id
         else:
-            print(f'  ✗ Falha: {resp.get("error", "desconhecido")}')
+            print(f'  - Falha: {resp.get("error", "desconhecido")}')
             return resp
     print('  ✗ Não foi possível encontrar o líder após redirecionamentos')
     return None
@@ -160,11 +160,11 @@ def main():
     scoreboard = result.get('scoreboard', {})
 
     if not correct:
-        print(f'\n✗ Resposta incorreta para a questão {args.question}.')
+        print(f'\n Resposta incorreta para a questão {args.question}.')
     elif first:
-        print(f'\n✓ Primeiro a acertar! +{points} pontos para {args.player}')
+        print(f'\n Primeiro a acertar! +{points} pontos para {args.player}')
     else:
-        print(f'\n✓ Correto, mas não foi o primeiro. +{points} pontos para {args.player} (metade)')
+        print(f'\n Correto, mas não foi o primeiro. +{points} pontos para {args.player} (metade)')
 
     print(f'Placar: {scoreboard}')
 
