@@ -1,73 +1,90 @@
 # T2 — Consenso via Raft (INE 5418 · UFSC · 2026/1)
 
-Implementação do algoritmo Raft em Python puro (sem dependências externas),
-com uma aplicação de quiz distribuído como demonstração.
+Implementação do algoritmo **Raft** em Python puro, com um quiz distribuído como aplicação de demonstração.
 
-## Requisitos
-
-- Python 3.10+
-- Sem pacotes externos (usa apenas a stdlib)
-
-## Estrutura
-
-```
-raft/
-  node.py       # máquina de estados Raft (eleição, log, commit)
-  messages.py   # dataclasses: RequestVote, AppendEntries, etc.
-  transport.py  # servidor/cliente TCP com Berkeley Sockets
-app/
-  quiz.py       # lógica do quiz — aplica comandos ao placar
-main.py         # ponto de entrada de cada nó
-client.py       # cliente CLI para jogadores
-run_cluster.sh  # sobe os 3 nós de uma vez
-```
-
-## Execução
-
-### Opção A — terminal por terminal (recomendado para desenvolvimento)
-
-Abra quatro terminais na pasta do projeto.
-
-**Terminal 1 — Nó 1:**
-```bash
-python3 main.py 1
-```
-
-**Terminal 2 — Nó 2:**
-```bash
-python3 main.py 2
-```
-
-**Terminal 3 — Nó 3:**
-```bash
-python3 main.py 3
-```
-
-Cada nó escuta na porta `5000 + id` (5001, 5002, 5003).  
-Em poucos instantes você verá nos logs qual nó se elegeu líder.
-
-**Terminal 4 — cliente:**
-```bash
-python3 client.py --questions                                              # listar perguntas
-python3 client.py --node 1 --player Alice --question 1 --answer AppendEntries
-python3 client.py --node 1 --scoreboard                                    # ver placar
-```
-
-O cliente redireciona automaticamente para o líder caso o nó contatado seja seguidor.
+- **Sem dependências externas** — usa apenas a stdlib do Python 3.10+
+- **3 nós** se comunicam via Berkeley Sockets (TCP/JSON)
+- O placar do quiz é a **state machine replicada** pelo Raft
 
 ---
 
-### Opção B — script automático (tudo em background)
+## Como executar
+
+### Passo 1 — subir o cluster (3 terminais)
 
 ```bash
-./run_cluster.sh          # sobe os 3 nós, logs em logs/
-tail -f logs/node1.log logs/node2.log logs/node3.log
+python3 main.py 1   # terminal 1 → escuta na porta 5001
+python3 main.py 2   # terminal 2 → escuta na porta 5002
+python3 main.py 3   # terminal 3 → escuta na porta 5003
 ```
 
-```bash
-./run_cluster.sh --demo   # cenário de submissões concorrentes
-./run_cluster.sh --kill   # encerra todos os nós
+Em poucos instantes um nó se elege líder. Procure nos logs:
 ```
+[NÓ 2 | LEADER    | term=1] tornou-se LÍDER
+```
+
+> Alternativa: `./run_cluster.sh` sobe os 3 nós em background com logs em `logs/`.
+
+---
+
+### Passo 2 — jogar (4º terminal)
+
+**Ver as perguntas:**
+```bash
+python3 client.py --questions
+```
+
+Saída:
+```
+[1] Qual protocolo o Raft usa para replicar entradas?
+      a) RequestVote
+      b) AppendEntries
+      c) HeartBeat
+      d) Commit
+...
+```
+
+**Enviar uma resposta:**
+```bash
+python3 client.py --node 1 --player Alice --question 1 --answer b
+```
+
+**Ver o placar:**
+```bash
+python3 client.py --node 1 --scoreboard
+```
+
+> O cliente redireciona automaticamente para o líder se o nó contatado for seguidor.
+
+---
+
+## Regra de pontuação
+
+A validação da resposta e o cálculo dos pontos acontecem **dentro do `apply()` da state machine**, não no cliente. Isso é intencional: o Raft serializa as submissões concorrentes, e quem aparecer primeiro no log é tratado como "primeiro a responder".
+
+| Situação | Pontos |
+|---|---|
+| Primeiro a acertar a questão | pontos cheios |
+| Segundo ou mais a acertar | metade (arredondado para baixo) |
+| Resposta errada | 0 pontos, nada é commitado |
+
+---
+
+## Estrutura do projeto
+
+```
+raft/
+  node.py       # máquina de estados Raft: eleição, replicação, commit
+  messages.py   # dataclasses das mensagens (RequestVote, AppendEntries…)
+  transport.py  # servidor/cliente TCP com Berkeley Sockets
+app/
+  quiz.py       # state machine do quiz: valida respostas, mantém placar
+main.py         # ponto de entrada de cada nó
+client.py       # cliente CLI para jogadores
+run_cluster.sh  # script para subir/derrubar o cluster
+```
+
+A separação entre `raft/` e `app/` é deliberada: o Raft não sabe nada sobre quiz, e o quiz não sabe nada sobre consenso — ele só implementa `apply(command)`.
 
 ---
 
@@ -75,76 +92,75 @@ tail -f logs/node1.log logs/node2.log logs/node3.log
 
 ### Cenário 1 — execução normal com dois clientes simultâneos
 
-O servidor suporta múltiplos clientes ao mesmo tempo — cada conexão roda em
-uma thread separada. Para demonstrar a concorrência manualmente, use **5 terminais**:
-
-**Terminais 1, 2, 3 — nós do cluster:**
-```bash
-python3 main.py 1   # terminal 1
-python3 main.py 2   # terminal 2
-python3 main.py 3   # terminal 3
-```
-
-**Terminal 4 — cliente Alice** (dispare ao mesmo tempo que o terminal 5):
-```bash
-python3 client.py --node 1 --player Alice --question 1 --answer AppendEntries
-```
-
-**Terminal 5 — cliente Bob** (dispare ao mesmo tempo que o terminal 4):
-```bash
-python3 client.py --node 2 --player Bob --question 2 --answer 3
-```
-
-Nos logs dos 3 nós você verá as duas entradas commitadas **na mesma ordem** e
-o placar final idêntico nos três. Ou via script:
+Mostra que todos os nós commitam as entradas **na mesma ordem** e chegam ao **mesmo placar**.
 
 ```bash
-./run_cluster.sh --demo
+# Terminal 4 — Alice responde a questão 1
+python3 client.py --node 1 --player Alice --question 1 --answer b
+
+# Terminal 5 — Bob responde a mesma questão ao mesmo tempo
+python3 client.py --node 2 --player Bob --question 1 --answer b
 ```
+
+Nos logs dos 3 nós você verá as duas entradas no log em uma ordem única e consistente. Quem aparecer no índice menor ganha pontos cheios; o outro ganha metade. O placar é idêntico nos 3 terminais.
+
+---
 
 ### Cenário 2 — falha do líder
 
+Mostra eleição automática e recuperação sem perda de dados.
+
 ```bash
-# 1. Iniciar o cluster
+# 1. Subir o cluster
 ./run_cluster.sh
 
-# 2. Ver qual nó virou líder (procure "tornou-se LÍDER" nos logs)
-grep "LÍDER" logs/node*.log
+# 2. Descobrir qual nó é o líder
+grep "tornou-se LÍDER" logs/node*.log
 
 # 3. Matar o líder (ex.: nó 1)
 kill $(cat logs/node1.pid)
 
-# 4. Observar nos outros logs:
-#    - election timeout
-#    - RequestVote sendo enviado
-#    - novo líder eleito com term incrementado
+# 4. Acompanhar a eleição nos logs dos nós restantes
 tail -f logs/node2.log logs/node3.log
 ```
 
-### Cenário 3 — recuperação de nó
-
-```bash
-# Após o cenário 2, reiniciar o nó que caiu:
-python main.py 1 > logs/node1.log 2>&1 &
-
-# O nó volta como follower e recebe AppendEntries para sincronizar o log.
-tail -f logs/node1.log
-```
+Você verá:
+- Election timeout disparando
+- `RequestVote` sendo enviado
+- Novo líder eleito com `term` incrementado
+- Operações continuando normalmente
 
 ---
 
-## Protocolo
+### Cenário 3 — recuperação de nó
 
-### Mensagens Raft (JSON sobre TCP)
+Mostra que um nó que caiu volta com o log sincronizado.
+
+```bash
+# Após o cenário 2, reiniciar o nó 1
+python3 main.py 1
+
+# Acompanhar a sincronização
+tail -f logs/node1.log
+```
+
+O nó volta como follower e recebe `AppendEntries` do líder atual para preencher as entradas que perdeu enquanto estava fora.
+
+---
+
+## Referência do protocolo
+
+### Mensagens (JSON sobre TCP)
 
 | Mensagem | De → Para | Quando |
 |---|---|---|
 | `RequestVote` | candidato → todos | ao iniciar eleição |
 | `RequestVoteReply` | qualquer → candidato | resposta ao voto |
-| `AppendEntries` | líder → seguidores | replicação + heartbeat |
-| `AppendEntriesReply` | seguidor → líder | confirmação |
-| `ClientRequest` | cliente → qualquer nó | submissão de resposta |
-| `GetScoreboard` | cliente → qualquer nó | consulta do placar |
+| `AppendEntries` | líder → seguidores | replicação de entradas + heartbeat |
+| `AppendEntriesReply` | seguidor → líder | confirmação ou rejeição |
+| `ClientRequest` | cliente → qualquer nó | submissão de resposta do quiz |
+| `ClientResponse` | nó → cliente | resultado após commit |
+| `GetScoreboard` | cliente → qualquer nó | consulta do placar (leitura local) |
 
 ### Timers
 
@@ -159,14 +175,22 @@ Cada nó salva `currentTerm`, `votedFor` e `log[]` em:
 ```
 data/raft_state_{node_id}.json
 ```
-Ao reiniciar, o estado é restaurado automaticamente.
+O estado é restaurado automaticamente ao reiniciar — um nó que cai e volta sincroniza o log via `AppendEntries`.
 
 ---
 
-## Formato do log
+## Formato dos logs
 
+Cada linha segue o padrão:
 ```
-HH:MM:SS.mmm [NÓ 1 | LEADER    | term=2] quórum atingido | commitIndex=3
-HH:MM:SS.mmm [NÓ 2 | FOLLOWER  | term=2] AppendEntries de 1 | +1 entr. | log_len=3
-HH:MM:SS.mmm [NÓ 3 | FOLLOWER  | term=2] APLICANDO | index=3 | cmd={...}
+HH:MM:SS.mmm [NÓ {id} | {ESTADO}   | term={n}] {evento}
+```
+
+Exemplos:
+```
+10:01:02.300 [NÓ 1 | LEADER    | term=2] client cmd enfileirado | index=4 | cmd={player: Alice, question_id: 1, answer: b}
+10:01:02.310 [NÓ 2 | FOLLOWER  | term=2] AppendEntries de 1 | +1 entr. | log_len=4
+10:01:02.320 [NÓ 3 | FOLLOWER  | term=2] AppendEntries de 1 | +1 entr. | log_len=4
+10:01:02.330 [NÓ 1 | LEADER    | term=2] quórum atingido | commitIndex=4
+10:01:02.330 [NÓ 1 | LEADER    | term=2] APLICANDO | index=4 | result={correct: true, points_awarded: 10, first: true}
 ```
