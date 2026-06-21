@@ -3,10 +3,14 @@
 client.py — Quiz player CLI.
 
 Usage:
-  python client.py --node 1 --player Alice --question 1 --answer AppendEntries
+  python client.py --node 1 --player Alice --question 1 --answer b
   python client.py --node 1 --questions          # list all questions
   python client.py --node 1 --scoreboard         # show current scoreboard
   python client.py --node 1 --raw '{"player":"Bob","points":10}'  # raw command
+
+Answers are submitted as letters (a/b/c/d).  Validation and point
+calculation happen inside the Raft state machine — the Raft log order
+determines who answered first.
 
 If the contacted node is not the leader, the client automatically retries
 with the leader indicated in the response (up to 3 redirects).
@@ -97,6 +101,8 @@ def main():
         print('\nPerguntas do Quiz:')
         for q in QuizApp.list_questions():
             print(f"  [{q['id']}] {q['text']}")
+            for letter, text in q['options'].items():
+                print(f"        {letter}) {text}")
         print()
         return
 
@@ -130,25 +136,37 @@ def main():
 
     # ── Quiz answer ─────────────────────────────────────────────────────
     if not all([args.player, args.question, args.answer]):
-        print('Use --player, --question e --answer (ou --questions / --scoreboard / --raw)')
+        print('Use --player, --question e --answer a|b|c|d  (ou --questions / --scoreboard / --raw)')
         sys.exit(1)
 
-    from app.quiz import QuizApp
-    quiz = QuizApp()
-    points = quiz.check_answer(args.question, args.answer)
-
-    if points == 0:
-        print(f'\n✗ Resposta incorreta para a questão {args.question}.')
-        return
-
-    print(f'\n✓ Resposta correta! +{points} pontos para {args.player}')
-    command = {'player': args.player, 'points': points}
+    command = {
+        'player': args.player,
+        'question_id': args.question,
+        'answer': args.answer.strip().lower(),
+    }
     resp = submit_command(args.node, command)
 
-    if resp and resp.get('success'):
-        print(f'Placar: {resp["result"]}')
-    elif resp:
+    if not resp:
+        return
+
+    if not resp.get('success'):
         print(f'Falha: {resp.get("error")}')
+        return
+
+    result = resp.get('result', {})
+    correct = result.get('correct', False)
+    points = result.get('points_awarded', 0)
+    first = result.get('first', False)
+    scoreboard = result.get('scoreboard', {})
+
+    if not correct:
+        print(f'\n✗ Resposta incorreta para a questão {args.question}.')
+    elif first:
+        print(f'\n✓ Primeiro a acertar! +{points} pontos para {args.player}')
+    else:
+        print(f'\n✓ Correto, mas não foi o primeiro. +{points} pontos para {args.player} (metade)')
+
+    print(f'Placar: {scoreboard}')
 
 
 if __name__ == '__main__':

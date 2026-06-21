@@ -1,13 +1,16 @@
 """
 app/quiz.py — Quiz state machine applied on top of the Raft log.
 
-The state is a simple scoreboard: {player_name: total_points}.
-Every committed Raft entry carries a command dict:
-  {"player": "<name>", "points": <int>}
+Command format (new):
+  {"player": "<name>", "question_id": <int>, "answer": "<letter>"}
 
-The QuizApp.apply() method is passed as the state_machine callback to
-RaftNode.  It is called exactly once per committed entry, in order, on
-every node — guaranteeing that all nodes converge to the same scoreboard.
+The Raft log is the source of truth: apply() validates the answer and
+decides points.  First correct answer earns full points; subsequent
+correct answers earn half (integer division).  All nodes apply the same
+log in the same order, so all scoreboards converge identically.
+
+Legacy format {"player": "<name>", "points": <int>} is still accepted
+for --raw submissions.
 """
 
 import threading
@@ -15,16 +18,48 @@ from typing import Any, Dict
 
 
 QUESTIONS = [
-    {'id': 1, 'text': 'Qual protocolo o Raft usa para replicar entradas?',
-     'answer': 'AppendEntries', 'points': 10},
-    {'id': 2, 'text': 'Quantos nós toleram 1 falha no Raft?',
-     'answer': '3', 'points': 10},
-    {'id': 3, 'text': 'O que acontece quando o líder não recebe maioria?',
-     'answer': 'eleição', 'points': 15},
-    {'id': 4, 'text': 'Qual campo do log garante a ordem total?',
-     'answer': 'index', 'points': 10},
-    {'id': 5, 'text': 'Como se chama o estado transitório na eleição?',
-     'answer': 'candidate', 'points': 10},
+    {
+        'id': 1,
+        'text': 'Qual protocolo o Raft usa para replicar entradas?',
+        'options': {'a': 'RequestVote', 'b': 'AppendEntries', 'c': 'HeartBeat', 'd': 'Commit'},
+        'answer': 'b',
+        'points': 10,
+    },
+    {
+        'id': 2,
+        'text': 'Quantos nós toleram 1 falha no Raft?',
+        'options': {'a': '2', 'b': '4', 'c': '3', 'd': '5'},
+        'answer': 'c',
+        'points': 10,
+    },
+    {
+        'id': 3,
+        'text': 'O que acontece quando o líder não recebe maioria?',
+        'options': {'a': 'commit', 'b': 'rollback', 'c': 'snapshot', 'd': 'eleição'},
+        'answer': 'd',
+        'points': 15,
+    },
+    {
+        'id': 4,
+        'text': 'Qual campo do log garante a ordem total?',
+        'options': {'a': 'term', 'b': 'leader', 'c': 'index', 'd': 'timestamp'},
+        'answer': 'c',
+        'points': 10,
+    },
+    {
+        'id': 5,
+        'text': 'Como se chama o estado transitório na eleição?',
+        'options': {'a': 'follower', 'b': 'candidate', 'c': 'leader', 'd': 'observer'},
+        'answer': 'b',
+        'points': 10,
+    },
+    {
+        'id': 6,
+        'text': 'Qual será o dia da prova de Computação Distribuída?',
+        'options': {'a': '01/07', 'b': '23/06', 'c': '24/06', 'd': '30/06'},
+        'answer': 'd',
+        'points': 10,
+    },
 ]
 
 
@@ -33,29 +68,69 @@ class QuizApp:
 
     def __init__(self):
         self._scoreboard: Dict[str, int] = {}
+        # question_id -> name of the first player who answered correctly
+        self._answered: Dict[int, str] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Raft state machine callback
     # ------------------------------------------------------------------
 
-    def apply(self, command: Any) -> Dict[str, int]:
+    def apply(self, command: Any) -> Dict:
         """
-        Called by RaftNode for each committed log entry.
-        command must be {"player": str, "points": int}.
-        Returns a snapshot of the scoreboard after applying the command.
+        Called by RaftNode for each committed log entry, in log order.
+
+        New format:  {"player": str, "question_id": int, "answer": str}
+        Legacy format: {"player": str, "points": int}
+
+        Returns a result dict:
+          {"scoreboard": {...}, "correct": bool, "points_awarded": int, "first": bool}
         """
         if not isinstance(command, dict):
-            return self.get_scoreboard()
+            return {'scoreboard': self.get_scoreboard(), 'correct': False,
+                    'points_awarded': 0, 'first': False}
 
+        # ── Legacy --raw path ────────────────────────────────────────────
+        if 'question_id' not in command:
+            player = command.get('player')
+            points = int(command.get('points', 0))
+            if player:
+                with self._lock:
+                    self._scoreboard[player] = self._scoreboard.get(player, 0) + points
+            return {'scoreboard': self.get_scoreboard(), 'correct': True,
+                    'points_awarded': points, 'first': False}
+
+        # ── New quiz path ────────────────────────────────────────────────
         player = command.get('player')
-        points = int(command.get('points', 0))
+        question_id = int(command.get('question_id', 0))
+        answer = str(command.get('answer', '')).strip().lower()
 
-        if player:
-            with self._lock:
-                self._scoreboard[player] = self._scoreboard.get(player, 0) + points
+        question = next((q for q in QUESTIONS if q['id'] == question_id), None)
+        if not question or not player:
+            return {'scoreboard': self.get_scoreboard(), 'correct': False,
+                    'points_awarded': 0, 'first': False}
 
-        return self.get_scoreboard()
+        correct = answer == question['answer']
+        if not correct:
+            return {'scoreboard': self.get_scoreboard(), 'correct': False,
+                    'points_awarded': 0, 'first': False}
+
+        with self._lock:
+            first = question_id not in self._answered
+            if first:
+                self._answered[question_id] = player
+                points = question['points']
+            else:
+                points = question['points'] // 2
+
+            self._scoreboard[player] = self._scoreboard.get(player, 0) + points
+
+        return {
+            'scoreboard': self.get_scoreboard(),
+            'correct': True,
+            'points_awarded': points,
+            'first': first,
+        }
 
     # ------------------------------------------------------------------
     # Query helpers
@@ -66,15 +141,7 @@ class QuizApp:
             return dict(sorted(self._scoreboard.items(),
                                key=lambda kv: kv[1], reverse=True))
 
-    def check_answer(self, question_id: int, answer: str) -> int:
-        """Return points if correct, 0 otherwise."""
-        for q in QUESTIONS:
-            if q['id'] == question_id:
-                if answer.strip().lower() == q['answer'].strip().lower():
-                    return q['points']
-                return 0
-        return 0
-
     @staticmethod
     def list_questions() -> list:
-        return [{'id': q['id'], 'text': q['text']} for q in QUESTIONS]
+        return [{'id': q['id'], 'text': q['text'], 'options': q['options']}
+                for q in QUESTIONS]

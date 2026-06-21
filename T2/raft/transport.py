@@ -23,18 +23,14 @@ class Transport:
       connections to the sender's known address).
     """
 
-    def __init__(self, host: str, port: int,
-                 on_message: Callable[[Dict, Callable], None]):
+    def __init__(self, host: str, port: int,on_message: Callable[[Dict, Callable], None]):
         self.host = host
         self.port = port
         self.on_message = on_message
         self._server_sock: socket.socket | None = None
         self._running = False
 
-    # ------------------------------------------------------------------
     # Lifecycle
-    # ------------------------------------------------------------------
-
     def start(self):
         self._running = True
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -54,10 +50,8 @@ class Transport:
             except OSError:
                 pass
 
-    # ------------------------------------------------------------------
-    # Server side
-    # ------------------------------------------------------------------
 
+    # Server side
     def _accept_loop(self):
         while self._running:
             try:
@@ -94,10 +88,8 @@ class Transport:
         finally:
             conn.close()
 
-    # ------------------------------------------------------------------
-    # Client side (fire-and-forget)
-    # ------------------------------------------------------------------
 
+    # Client side (fire-and-forget)
     def send(self, host: str, port: int, msg: Dict) -> bool:
         """Send a message. Returns True on success, False if unreachable."""
         try:
@@ -111,8 +103,7 @@ class Transport:
             logger.debug(f"send to {host}:{port} failed: {e}")
             return False
 
-    def request(self, host: str, port: int, msg: Dict,
-                timeout: float = 10.0) -> Dict | None:
+    def request(self, host: str, port: int, msg: Dict, timeout: float = 10.0) -> Dict | None:
         """Send a message and wait for a reply (used by quiz clients)."""
         try:
             data = json.dumps(msg).encode()
