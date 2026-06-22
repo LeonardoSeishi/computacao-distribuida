@@ -64,33 +64,33 @@ QUESTIONS = [
 
 
 class QuizApp:
-    """Replicated quiz scoreboard driven by Raft."""
+    """Placar de quiz replicado em todos os nós do cluster Raft.  Cada nó aplica o log na mesma ordem."""
 
     def __init__(self):
         self._scoreboard: Dict[str, int] = {}
-        # question_id -> name of the first player who answered correctly
+        # question_id -> nome do jogador que respondeu corretamente primeiro
         self._answered: Dict[int, str] = {}
         self._lock = threading.Lock()
 
-    # ------------------------------------------------------------------
-    # Raft state machine callback
-    # ------------------------------------------------------------------
+    # 
+    # Máquina de estados do quiz
+    # 
 
     def apply(self, command: Any) -> Dict:
         """
-        Called by RaftNode for each committed log entry, in log order.
+        Invocado por cado nodo Raft para todas as entradas comprometidas.
 
-        New format:  {"player": str, "question_id": int, "answer": str}
-        Legacy format: {"player": str, "points": int}
+        Novo formato:  {"player": str, "question_id": int, "answer": str}
+        Formato legadi: {"player": str, "points": int}
 
-        Returns a result dict:
+        Retorna um dicionário de resultados:
           {"scoreboard": {...}, "correct": bool, "points_awarded": int, "first": bool}
         """
         if not isinstance(command, dict):
             return {'scoreboard': self.get_scoreboard(), 'correct': False,
                     'points_awarded': 0, 'first': False}
 
-        # ── Legacy --raw path ────────────────────────────────────────────
+        # Legado: --raw 
         if 'question_id' not in command:
             player = command.get('player')
             points = int(command.get('points', 0))
@@ -100,7 +100,7 @@ class QuizApp:
             return {'scoreboard': self.get_scoreboard(), 'correct': True,
                     'points_awarded': points, 'first': False}
 
-        # ── New quiz path ────────────────────────────────────────────────
+        # Formato para novo quiz: {"player": str, "question_id": int, "answer": str}
         player = command.get('player')
         question_id = int(command.get('question_id', 0))
         answer = str(command.get('answer', '')).strip().lower()
@@ -132,9 +132,9 @@ class QuizApp:
             'first': first,
         }
 
-    # ------------------------------------------------------------------
-    # Query helpers
-    # ------------------------------------------------------------------
+    # 
+    # Consulta de placar/perguntas
+    # 
 
     def get_scoreboard(self) -> Dict[str, int]:
         with self._lock:

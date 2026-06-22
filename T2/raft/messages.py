@@ -120,7 +120,7 @@ class AppendEntriesReply:
 
 
 def parse_message(d: Dict):
-    """Deserialize a raw dict into the appropriate message dataclass."""
+    """Deserializa um dicionário em uma das classes de mensagem Raft"""
     t = d.get('type')
     if t == 'RequestVote':
         return RequestVote.from_dict(d)

@@ -11,16 +11,7 @@ _RECV_BUF = 65536
 
 class Transport:
     """
-    TCP transport layer built on Berkeley Sockets.
-
-    Each message is sent as a separate short-lived connection.
-    The server side keeps the connection open long enough to optionally
-    send a reply (used by client-request handlers), then closes it.
-
-    on_message(raw_dict, reply_fn) — called for every incoming message.
-      reply_fn(response_dict) sends a response on the same connection;
-      Raft-internal RPCs never call reply_fn (their replies are new outbound
-      connections to the sender's known address).
+    Camada de transporte TCP com Berkeley Sockets.
     """
 
     def __init__(self, host: str, port: int,on_message: Callable[[Dict, Callable], None]):
@@ -30,7 +21,7 @@ class Transport:
         self._server_sock: socket.socket | None = None
         self._running = False
 
-    # Lifecycle
+    
     def start(self):
         self._running = True
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -40,7 +31,7 @@ class Transport:
         t = threading.Thread(target=self._accept_loop, daemon=True,
                               name=f'transport-accept-{self.port}')
         t.start()
-        logger.debug(f"Transport listening on {self.host}:{self.port}")
+        logger.debug(f"Transporte escutando em {self.host}:{self.port}")
 
     def stop(self):
         self._running = False
@@ -51,7 +42,7 @@ class Transport:
                 pass
 
 
-    # Server side
+    # Server-side
     def _accept_loop(self):
         while self._running:
             try:
@@ -84,14 +75,14 @@ class Transport:
                 msg = json.loads(data.decode())
                 self.on_message(msg, reply_fn)
         except Exception as e:
-            logger.debug(f"Connection handler error: {e}")
+            logger.debug(f"Erro de conexão: {e}")
         finally:
             conn.close()
 
 
-    # Client side (fire-and-forget)
+    # Client-side
     def send(self, host: str, port: int, msg: Dict) -> bool:
-        """Send a message. Returns True on success, False if unreachable."""
+        """Envia mensagem. Retorna True se sucesso ou False se host inalcançável"""
         try:
             data = json.dumps(msg).encode()
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -100,11 +91,11 @@ class Transport:
                 s.sendall(data)
             return True
         except Exception as e:
-            logger.debug(f"send to {host}:{port} failed: {e}")
+            logger.debug(f"Envio para {host}:{port} falhou: {e}")
             return False
 
     def request(self, host: str, port: int, msg: Dict, timeout: float = 10.0) -> Dict | None:
-        """Send a message and wait for a reply (used by quiz clients)."""
+        """Envia uma mensagem e aguarda por resposta (usada para clientes no quiz)"""
         try:
             data = json.dumps(msg).encode()
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -120,5 +111,5 @@ class Transport:
                     reply += chunk
             return json.loads(reply.decode()) if reply else None
         except Exception as e:
-            logger.debug(f"request to {host}:{port} failed: {e}")
+            logger.debug(f"Requisição para {host}:{port} falhou: {e}")
             return None
