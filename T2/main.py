@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-main.py — Entry point for a single Raft node.
+main.py — Nodo Raft único
 
-Usage:
-  python main.py <node_id> [--nodes N] [--host HOST] [--base-port PORT] [--data-dir DIR]
+Como executar:
+  python main.py <id_nodo> [--nodes Num_nodos] [--host endereço_host] [--base-port num_porta] [--data-dir pasta_dados]
 
-Examples:
-  python main.py 1               # node 1 of a 3-node cluster on localhost
-  python main.py 2 --nodes 5    # node 2 of a 5-node cluster
+Ex.:
+  python main.py 1               # nodo 1 de cluster com qtd. padrão de nós (3) em localhost (endereço padrão)
+  python main.py 2 --nodes 5    # nodo 2 de cluster com 5 nodos
 """
 
 import argparse
@@ -28,7 +28,7 @@ def setup_logging(node_id: int):
         datefmt='%H:%M:%S',
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-    # Suppress verbose debug from lower layers.
+    # Não exibir logs desnecessários
     logging.getLogger('raft.transport').setLevel(logging.WARNING)
 
 
@@ -54,7 +54,7 @@ def main():
 
     setup_logging(node_id)
 
-    # Build peer map: every node except ourselves.
+    # Configurar demais nodos como peers
     peers = {
         i: (host, args.base_port + i)
         for i in range(1, args.nodes + 1)
@@ -72,7 +72,7 @@ def main():
         data_dir=args.data_dir,
     )
 
-    # Wire the scoreboard query into the node so GetScoreboard RPCs work.
+    # Permitir que o cliente obtenha o placar atual via Raft
     node._get_scoreboard_fn = quiz.get_scoreboard
 
     node.start()

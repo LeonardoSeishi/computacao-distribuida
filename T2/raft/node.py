@@ -1,14 +1,13 @@
 """
-raft/node.py — Raft consensus state machine.
-
-Implements:
-  • Leader election (RequestVote / RequestVoteReply)
-  • Log replication (AppendEntries / AppendEntriesReply)
-  • Persistence of currentTerm, votedFor, log[] to disk
-  • Public API: start(), stop(), submit(command) -> (success, result)
-
-Thread model: all state mutations happen under self._lock (RLock).
-Timers and network sends happen outside the lock to avoid blocking.
+raft/node.py — Máquina de estados Raft
+  • Eleição de líder (RequestVote / RequestVoteReply)
+  • Replicação de logs  (AppendEntries / AppendEntriesReply)
+  • Persistência de currentTerm, votedFor e log[]
+  • API para cliente:
+  start(), stop(), submit(command) -> (success, result)
+  
+Concorrência: todas as mudanças de estado são protegidas por self._lock (RLock).
+Timers e comunicação via rede são feitas fora do lock para evitar bloqueios.
 """
 
 import json
@@ -30,7 +29,7 @@ ELECTION_TIMEOUT_MIN = 0.150   # 150 ms
 ELECTION_TIMEOUT_MAX = 0.300   # 300 ms
 HEARTBEAT_INTERVAL   = 0.050   # 50 ms
 
-# Sentinel: submit() returns this when the node stepped down before commit.
+# Retorno quando um nodo sai antes de comprometer uam entrada
 _LOST_LEADERSHIP = object()
 
 
@@ -38,10 +37,10 @@ class RaftNode:
     def __init__(
         self,
         node_id: int,
-        peers: Dict[int, Tuple[str, int]],   # {peer_id: (host, port)}
+        peers: Dict[int, Tuple[str, int]], 
         host: str,
         port: int,
-        state_machine: Callable[[Any], Any],  # called on each committed entry
+        state_machine: Callable[[Any], Any], 
         data_dir: str = './data',
     ):
         self.node_id = node_id
@@ -51,26 +50,26 @@ class RaftNode:
         self.state_machine = state_machine
         self.data_dir = data_dir
 
-        # ── Persistent state (written to disk before responding to RPCs) ──
+        # Estado persistente
         self.current_term: int = 0
         self.voted_for: Optional[int] = None
-        self.log: List[LogEntry] = []       # 0-based list; Raft indices are 1-based
+        self.log: List[LogEntry] = []       
 
-        # ── Volatile state (all nodes) ──
-        self.commit_index: int = 0          # highest log index known to be committed
-        self.last_applied: int = 0          # highest log index applied to state machine
-        self.state: str = 'follower'        # 'follower' | 'candidate' | 'leader'
+        # Estado volátil
+        self.commit_index: int = 0          # Maior índice comprometido
+        self.last_applied: int = 0          # Maior indice aplicado à máquina de estados
+        self.state: str = 'follower'       
         self.current_leader: Optional[int] = None
 
-        # ── Volatile state (candidates) ──
+        # Estado volátil para candidatos
         self.votes_received: Set[int] = set()
 
-        # ── Volatile state (leaders only) ──
-        self.next_index: Dict[int, int] = {}   # peer_id -> next log index to send
-        self.match_index: Dict[int, int] = {}  # peer_id -> highest replicated index
+        # Estado volátil para líderes (mensagens de AppendEntries)
+        self.next_index: Dict[int, int] = {}   
+        self.match_index: Dict[int, int] = {}  
 
-        # ── Pending client submits ──
-        # index -> threading.Event; event is set when entry is committed (or lost)
+        # Submissão de clientes
+        # Eventos para sinalizar quando uma entrada é comprometida ou liderança perdida.
         self._pending: Dict[int, threading.Event] = {}
         self._pending_results: Dict[int, Any] = {}
 
@@ -81,9 +80,9 @@ class RaftNode:
         self._transport = Transport(host, port, self._on_message)
         self._load_persistent_state()
 
-    # ════════════════════════════════════════════════════════════════════
-    # Public API
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # API
+    #
 
     def start(self):
         self._transport.start()
@@ -98,11 +97,11 @@ class RaftNode:
 
     def submit(self, command: Any) -> Tuple[bool, Any]:
         """
-        Submit a command to the replicated log.
+        Enviar comando para o log do líder.
 
-        Returns (True, result) when the entry is committed and applied.
-        Returns (False, leader_id_or_None) if this node is not the leader,
-        or if leadership is lost before the entry commits.
+        Retorna (True, result) quando a entrada é comprometida.
+        Retorna (False, leader_id_or_None) se o nó não é o líder
+        ou se a liderança foi perdida antes do comprometimento (LOST_LEADERSHIP)
         """
         with self._lock:
             if self.state != 'leader':
@@ -119,10 +118,10 @@ class RaftNode:
             self._pending[index] = event
             self._log(f'client cmd enfileirado | index={index} | cmd={command}')
 
-        # Kick replication immediately (outside lock).
+        # Replicação fora do lock para não bloquear o cliente
         self._send_append_entries_to_all()
 
-        # Block until committed or timeout.
+        # Bloqueado até comprometer ou timeout
         committed = event.wait(timeout=5.0)
         if not committed:
             self._pending.pop(index, None)
@@ -141,9 +140,9 @@ class RaftNode:
     def leader_id(self) -> Optional[int]:
         return self.current_leader
 
-    # ════════════════════════════════════════════════════════════════════
-    # Persistence
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Persistência
+    #
 
     def _persistence_path(self) -> str:
         return os.path.join(self.data_dir, f'raft_state_{self.node_id}.json')
@@ -166,7 +165,7 @@ class RaftNode:
             logger.error(f'Erro ao carregar estado persistido: {e}')
 
     def _save_persistent_state(self):
-        """Atomically write persistent state. Called with lock held."""
+        """Escreve estado persistente de forma atômica."""
         os.makedirs(self.data_dir, exist_ok=True)
         path = self._persistence_path()
         tmp = path + '.tmp'
@@ -181,12 +180,12 @@ class RaftNode:
         except Exception as e:
             logger.error(f'Erro ao salvar estado persistido: {e}')
 
-    # ════════════════════════════════════════════════════════════════════
+    # 
     # Timers
-    # ════════════════════════════════════════════════════════════════════
+    # 
 
     def _reset_election_timer(self):
-        """Cancel the current timer and start a new one. Lock not required."""
+        """Cancela o timer atual. Sem necessidade de lock."""
         if self._election_timer:
             self._election_timer.cancel()
         timeout = random.uniform(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX)
@@ -211,9 +210,9 @@ class RaftNode:
             self._heartbeat_timer.cancel()
             self._heartbeat_timer = None
 
-    # ════════════════════════════════════════════════════════════════════
-    # Election
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Eleição de líder
+    # 
 
     def _start_election(self):
         with self._lock:
@@ -240,7 +239,7 @@ class RaftNode:
                 f'eleição iniciada | pedindo votos de {list(peers_snapshot.keys())}'
             )
 
-        # Send outside lock; reset timer in case this election is inconclusive.
+        # Envio fora do lock. Se o resultado é inconclusivo, reinicia o timer
         for peer_id, (h, p) in peers_snapshot.items():
             threading.Thread(
                 target=self._transport.send,
@@ -250,9 +249,9 @@ class RaftNode:
 
         self._reset_election_timer()
 
-    # ════════════════════════════════════════════════════════════════════
-    # Heartbeat / replication
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Heartbeats e replicação de logs
+    # 
 
     def _heartbeat_tick(self):
         with self._lock:
@@ -296,9 +295,9 @@ class RaftNode:
 
         self._transport.send(host, port, msg.to_dict())
 
-    # ════════════════════════════════════════════════════════════════════
-    # Message dispatcher
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Disparo de mensagens
+    # 
 
     def _on_message(self, raw: Dict, reply_fn):
         msg = parse_message(raw)
@@ -318,9 +317,9 @@ class RaftNode:
         else:
             logger.warning(f'Mensagem desconhecida: {raw.get("type")}')
 
-    # ════════════════════════════════════════════════════════════════════
-    # RPC handlers
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # RPC 
+    # 
 
     def _handle_request_vote(self, msg: RequestVote):
         vote_granted = False
@@ -375,7 +374,7 @@ class RaftNode:
                     f'| total={len(self.votes_received)}'
                 )
 
-            # Majority = (total_nodes // 2) + 1; total = peers + self
+            # Maioria absoluta ([(N+1)//2 + 1] de N) para permitir número par de nodos.
             quorum = (len(self.peers) + 1) // 2 + 1
             if len(self.votes_received) >= quorum:
                 self._become_leader()
@@ -393,23 +392,23 @@ class RaftNode:
                     followerId=self.node_id, matchIndex=0,
                 )
             else:
-                # Valid message from current leader.
+                # Mensagem válida do líder
                 self.current_leader = msg.leaderId
                 if self.state != 'follower':
                     self._become_follower(msg.term)
                 else:
                     self._reset_election_timer()
 
-                # Consistency check.
+                # Consistência de log
                 if msg.prevLogIndex > len(self.log):
-                    # Missing entries — signal how many we have so leader backs up.
+                    # Contabilizar entradas faltantes 
                     reply = AppendEntriesReply(
                         term=self.current_term, success=False,
                         followerId=self.node_id, matchIndex=len(self.log),
                     )
                 elif (msg.prevLogIndex > 0 and
                       self.log[msg.prevLogIndex - 1].term != msg.prevLogTerm):
-                    # Term conflict — delete from prevLogIndex onward.
+                    # Conflito de terms: descarta a partir do índice com conflito
                     self.log = self.log[:msg.prevLogIndex - 1]
                     self._save_persistent_state()
                     reply = AppendEntriesReply(
@@ -417,7 +416,7 @@ class RaftNode:
                         followerId=self.node_id, matchIndex=len(self.log),
                     )
                 else:
-                    # Append entries, overwriting conflicts.
+                    # Inserir logs sobrescrevendo conflitos
                     for i, entry in enumerate(msg.entries):
                         log_idx = msg.prevLogIndex + i + 1
                         if log_idx <= len(self.log):
@@ -435,7 +434,7 @@ class RaftNode:
                             f'| log_len={len(self.log)}'
                         )
 
-                    # Advance commitIndex.
+                    # Avançar commitIndex
                     if msg.leaderCommit > self.commit_index:
                         self.commit_index = min(msg.leaderCommit, len(self.log))
                         self._apply_committed_entries()
@@ -470,9 +469,9 @@ class RaftNode:
                 # Back up nextIndex using the follower's hint.
                 self.next_index[fid] = max(1, msg.matchIndex + 1)
 
-    # ════════════════════════════════════════════════════════════════════
-    # Client request handlers (called from transport thread)
-    # ════════════════════════════════════════════════════════════════════
+    #
+    # Requisições de clientes
+    # 
 
     def _handle_client_request(self, command: Any, reply_fn):
         with self._lock:
@@ -488,7 +487,7 @@ class RaftNode:
             })
             return
 
-        # submit() blocks until committed — do it outside the lock.
+        # submit() é bloqueante, então é chamado fora do lock
         success, result = self.submit(command)
 
         if success:
@@ -502,21 +501,19 @@ class RaftNode:
             })
 
     def _handle_get_scoreboard(self, reply_fn):
-        """Return current state without going through consensus (stale read ok)."""
+        """Retorna o estado atual sem passar pelo consenso"""
         with self._lock:
-            # Re-apply all committed entries up to last_applied to reconstruct
-            # state — but state_machine is already applied incrementally, so
-            # we just ask the app layer. We expose this via a callback set by
-            # the application after construction.
+            # Re-aplica todas as entradas comprometidas para reconstuir o
+            # estado atual.
             scoreboard_fn = getattr(self, '_get_scoreboard_fn', None)
         if scoreboard_fn:
             reply_fn({'type': 'Scoreboard', 'data': scoreboard_fn()})
         else:
             reply_fn({'type': 'Scoreboard', 'data': {}})
 
-    # ════════════════════════════════════════════════════════════════════
-    # State transitions (must be called with lock held)
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Transição de estados (deve ser chamado com lock)
+    # 
 
     def _become_follower(self, term: int):
         old_state = self.state
@@ -526,7 +523,7 @@ class RaftNode:
         self._save_persistent_state()
         self._cancel_heartbeat_timer()
 
-        # Fail any pending submits so clients don't block until timeout.
+        # Falha submissões pendentes para que clientes não permeneçam bloqueados indefinidamente
         for idx, event in list(self._pending.items()):
             self._pending_results[idx] = _LOST_LEADERSHIP
             event.set()
@@ -547,20 +544,20 @@ class RaftNode:
         for pid in self.peers:
             self.next_index[pid] = last + 1
             self.match_index[pid] = 0
-        # Leader counts itself in quorum calculations.
+        # Líder contabiliza a si mesmo para quórum
         self.match_index[self.node_id] = last
 
         self._log(f'tornou-se LÍDER | term={self.current_term}')
         self._start_heartbeat_timer()
 
-    # ════════════════════════════════════════════════════════════════════
-    # Commit & apply (must be called with lock held)
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Comprometer e aplicar (requer lock)
+    # 
 
     def _advance_commit_index(self):
         """
-        Leader: find the highest N > commitIndex such that
-          log[N].term == currentTerm AND a majority has matchIndex >= N.
+        Líder: encontrar o maior N tal que N > commitIndex, 
+        log[N].term == currentTerm e um quórum de matchIndex >= N.
         """
         total = len(self.peers) + 1
         quorum = total // 2 + 1
@@ -576,7 +573,7 @@ class RaftNode:
                 break
 
     def _apply_committed_entries(self):
-        """Apply all entries up to commitIndex to the state machine."""
+        """Aplica todas as entradas até commitIndex."""
         while self.last_applied < self.commit_index:
             self.last_applied += 1
             entry = self.log[self.last_applied - 1]
@@ -585,15 +582,15 @@ class RaftNode:
                 f'APLICANDO | index={self.last_applied} '
                 f'| cmd={entry.command} | result={result}'
             )
-            # Notify waiting submit() call, if any.
+            # Notifica se há clientes aguardando por esta entrada
             if entry.index in self._pending:
                 self._pending_results[entry.index] = result
                 self._pending[entry.index].set()
                 del self._pending[entry.index]
 
-    # ════════════════════════════════════════════════════════════════════
-    # Logging helper
-    # ════════════════════════════════════════════════════════════════════
+    # 
+    # Logging
+    # 
 
     def _log(self, msg: str):
         state_label = self.state.upper().ljust(9)

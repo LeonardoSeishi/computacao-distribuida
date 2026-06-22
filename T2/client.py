@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-client.py — Quiz player CLI.
+client.py — Jogador CLI.
 
-Usage:
+Como executar:
   python client.py --node 1 --player Alice --question 1 --answer b
-  python client.py --node 1 --questions          # list all questions
-  python client.py --node 1 --scoreboard         # show current scoreboard
-  python client.py --node 1 --raw '{"player":"Bob","points":10}'  # raw command
+  python client.py --node 1 --questions          # listar perguntas
+  python client.py --node 1 --scoreboard         # mostrar placar atual
+  python client.py --node 1 --raw '{"player":"Bob","points":10}'  # enviar comando diretamente via JSON
 
-Answers are submitted as letters (a/b/c/d).  Validation and point
-calculation happen inside the Raft state machine — the Raft log order
-determines who answered first.
+Respostas são enviadas indicando a alternativa (a, b, c , d).  O cálculo de pontuação ocorre na máquina de estados Raft,
+onde a ordem de logs determina quem respondeu primeiro.
 
-If the contacted node is not the leader, the client automatically retries
-with the leader indicated in the response (up to 3 redirects).
+Se o cliente contatado não é o líder, ele tenta novamente
+redirecionando para o líder indicado na resposta (até 3 redirecionamentos).
+
 """
 
 import argparse
@@ -95,7 +95,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # ── List questions ──────────────────────────────────────────────────
+    # Listar perguntas
     if args.questions:
         from app.quiz import QuizApp
         print('\nPerguntas do Quiz:')
@@ -106,7 +106,7 @@ def main():
         print()
         return
 
-    # ── Show scoreboard ─────────────────────────────────────────────────
+    # Mostrar placar
     if args.scoreboard:
         resp = get_scoreboard(args.node)
         if resp and 'data' in resp:
@@ -122,7 +122,7 @@ def main():
         print()
         return
 
-    # ── Raw command ─────────────────────────────────────────────────────
+    # Enviar comando diretamente via JSON
     if args.raw:
         try:
             command = json.loads(args.raw)
@@ -134,7 +134,7 @@ def main():
             print(f'\nPlacar: {resp["result"]}')
         return
 
-    # ── Quiz answer ─────────────────────────────────────────────────────
+    # Resposta do Quiz
     if not all([args.player, args.question, args.answer]):
         print('Use --player, --question e --answer a|b|c|d  (ou --questions / --scoreboard / --raw)')
         sys.exit(1)

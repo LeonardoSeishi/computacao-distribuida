@@ -1,2 +1,2 @@
-# Sem dependências externas — apenas stdlib do Python 3.10+
+# Sem dependências externas — apenas stdlib do Python 3.10+:
 # socket, threading, json, os, random, signal, argparse, dataclasses
