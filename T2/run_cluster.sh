@@ -4,6 +4,7 @@
 # Uso:
 #   ./run_cluster.sh           # inicia os 3 nós (logs em logs/)
 #   ./run_cluster.sh --kill    # encerra todos os nós
+#   ./run_cluster.sh --reset   # encerra, apaga estado persistido e reinicia do zero
 #   ./run_cluster.sh --demo    # cenário: submissões concorrentes
 
 set -euo pipefail
@@ -23,10 +24,21 @@ if [[ "${1:-}" == "--kill" ]]; then
     exit 0
 fi
 
+# ── Reset mode ───────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--reset" ]]; then
+    echo "Encerrando todos os nós Raft..."
+    pkill -f "python3 main.py" 2>/dev/null || true
+    echo "Apagando estado persistido ($DATADIR/)..."
+    rm -f "$DATADIR"/raft_state_*.json
+    echo "Apagando logs ($LOGDIR/)..."
+    rm -f "$LOGDIR"/node*.log "$LOGDIR"/node*.pid
+    echo "Pronto. Execute './run_cluster.sh' para iniciar um cluster limpo."
+    exit 0
+fi
+
 # ── Demo mode ────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--demo" ]]; then
     echo "=== DEMO: submissões concorrentes ==="
-    echo "Aguardando líder eleger-se (2s)..."
     sleep 2
     echo ""
     # Q1: "Qual protocolo o Raft usa para replicar entradas?" → correta: b (AppendEntries)
@@ -38,11 +50,6 @@ if [[ "${1:-}" == "--demo" ]]; then
     python3 client.py --node 3 --player Leo    --question 1 --answer a &
     wait
     echo ""
-    echo "Placar final (todos os nós devem ser idênticos):"
-    for i in $(seq 1 $NODES); do
-        echo -n "  Nó $i: "
-        python3 client.py --node "$i" --scoreboard 2>/dev/null || echo "(indisponível)"
-    done
     exit 0
 fi
 
@@ -68,6 +75,7 @@ echo "  python3 client.py --node 1 --player Alice --question 1 --answer b  # res
 echo "  python3 client.py --node 1 --scoreboard                           # ver placar"
 echo "  ./run_cluster.sh --demo                                            # cenário de demonstração"
 echo "  ./run_cluster.sh --kill                                            # encerrar tudo"
+echo "  ./run_cluster.sh --reset                                           # encerrar + apagar estado (sem reiniciar)"
 echo ""
 echo "Cenário de falha do líder:"
 echo "  Descubra qual nó é o líder nos logs, depois:"

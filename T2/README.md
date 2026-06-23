@@ -3,7 +3,7 @@
 Implementação do algoritmo **Raft** em Python puro, com um quiz distribuído como aplicação de demonstração.
 
 - **Sem dependências externas** — usa apenas a stdlib do Python 3.10+
-- **3 nós** se comunicam via Berkeley Sockets (TCP/JSON)
+- **3 a N nós** se comunicam via Berkeley Sockets (TCP/JSON)
 - O placar do quiz é a **state machine replicada** pelo Raft
 
 ---
@@ -39,7 +39,10 @@ python3 main.py 5 --nodes 5 > logs/node5.log 2>&1 &
 
 ### Passo 2 — jogar (4º terminal)
 
-**Ver as perguntas:**
+#### Listar as perguntas
+
+Não precisa de cluster no ar — lê localmente:
+
 ```bash
 python3 client.py --questions
 ```
@@ -54,17 +57,78 @@ Saída:
 ...
 ```
 
-**Enviar uma resposta:**
+#### Responder uma pergunta
+
 ```bash
 python3 client.py --node 1 --player Leo --question 1 --answer b
 ```
 
-**Ver o placar:**
-```bash
-python3 client.py --node 1 --scoreboard
+| Parâmetro | Descrição |
+|---|---|
+| `--node N` | Nó inicial a contatar (1, 2 ou 3). Se não for o líder, o cliente redireciona automaticamente. |
+| `--player Nome` | Nome do jogador |
+| `--question N` | ID da pergunta (1 a 6) |
+| `--answer X` | Letra da alternativa: `a`, `b`, `c` ou `d` |
+
+Saída (acerto como primeiro):
+```
+ Primeiro a acertar! +10 pontos para Leo
+Placar: {'Leo': 10}
 ```
 
-> O cliente redireciona automaticamente para o líder se o nó contatado for seguidor.
+Saída (acerto mas não foi o primeiro):
+```
+ Correto, mas não foi o primeiro. +5 pontos para Leo (metade)
+Placar: {'Alice': 10, 'Leo': 5}
+```
+
+Saída (resposta errada):
+```
+ Resposta incorreta para a questão 1.
+Placar: {'Alice': 10}
+```
+
+#### Ver o placar
+
+Leitura local — pode apontar para qualquer nó:
+
+```bash
+python3 client.py --node 1 --scoreboard
+# ou em outro nó
+python3 client.py --node 3 --scoreboard
+```
+
+Saída:
+```
+Placar atual:
+  1. Alice: 20 pts
+  2. Leo: 10 pts
+```
+
+#### Enviar comando JSON bruto (avançado)
+
+Permite injetar qualquer comando diretamente na state machine:
+
+```bash
+python3 client.py --node 1 --raw '{"player":"Admin","points":100}'
+```
+
+---
+
+### Gerenciar o cluster com `run_cluster.sh`
+
+| Comando | O que faz |
+|---|---|
+| `./run_cluster.sh` | Sobe 3 nós em background com logs em `logs/` |
+| `./run_cluster.sh --kill` | Encerra todos os nós |
+| `./run_cluster.sh --reset` | Encerra os nós e apaga estado persistido (`data/`) e logs — não reinicia |
+| `./run_cluster.sh --demo` | Executa cenário de demonstração com 3 jogadores simultâneos |
+
+Após um `--reset`, reinicie o cluster limpo com:
+
+```bash
+./run_cluster.sh
+```
 
 ---
 

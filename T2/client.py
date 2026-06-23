@@ -3,10 +3,10 @@
 client.py — Jogador CLI.
 
 Como executar:
-  python client.py --node 1 --player Alice --question 1 --answer b
+  python client.py --node 1 --player Leo --question 1 --answer b
   python client.py --node 1 --questions          # listar perguntas
   python client.py --node 1 --scoreboard         # mostrar placar atual
-  python client.py --node 1 --raw '{"player":"Bob","points":10}'  # enviar comando diretamente via JSON
+  python client.py --node 1 --raw '{"player":"Leo","points":10}'  # enviar comando diretamente via JSON
 
 Respostas são enviadas indicando a alternativa (a, b, c , d).  O cálculo de pontuação ocorre na máquina de estados Raft,
 onde a ordem de logs determina quem respondeu primeiro.
