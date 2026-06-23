@@ -23,6 +23,16 @@ Em poucos instantes um nó se elege líder. Procure nos logs:
 [NÓ 2 | LEADER    | term=1] tornou-se LÍDER
 ```
 
+> Alternativa 5 nós
+```bash
+./run_cluster.sh --kill
+python3 main.py 1 --nodes 5 > logs/node1.log 2>&1 &
+python3 main.py 2 --nodes 5 > logs/node2.log 2>&1 &
+python3 main.py 3 --nodes 5 > logs/node3.log 2>&1 &
+python3 main.py 4 --nodes 5 > logs/node4.log 2>&1 &
+python3 main.py 5 --nodes 5 > logs/node5.log 2>&1 &
+```
+
 > Alternativa: `./run_cluster.sh` sobe os 3 nós em background com logs em `logs/`.
 
 ---
@@ -46,7 +56,7 @@ Saída:
 
 **Enviar uma resposta:**
 ```bash
-python3 client.py --node 1 --player Alice --question 1 --answer b
+python3 client.py --node 1 --player Leo --question 1 --answer b
 ```
 
 **Ver o placar:**

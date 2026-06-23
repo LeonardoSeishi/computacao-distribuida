@@ -71,5 +71,5 @@ echo "  ./run_cluster.sh --kill                                            # enc
 echo ""
 echo "Cenário de falha do líder:"
 echo "  Descubra qual nó é o líder nos logs, depois:"
-echo "  kill \$(cat $LOGDIR/node<id>.pid)"
+echo "  pkill -f "main.py id "
 echo "  Observe nos outros logs a eleição de um novo líder."
